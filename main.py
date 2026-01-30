@@ -7,13 +7,11 @@ from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 
-# Импортируем наши собственные модули
 import core
 import database
 
 app = FastAPI()
 
-# Настройки путей
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(BASE_DIR, "static", "uploads")
 RESULT_DIR = os.path.join(BASE_DIR, "static", "results")
@@ -30,7 +28,6 @@ async def index(request: Request):
 
 @app.post("/process_video/")
 async def process_video(file: UploadFile = File(...)):
-    # 1. Сохранение входящего файла
     temp_path = os.path.join(UPLOAD_DIR, file.filename)
     with open(temp_path, "wb") as buffer:
         buffer.write(await file.read())
@@ -39,7 +36,6 @@ async def process_video(file: UploadFile = File(...)):
     web_filename = f"web_{datetime.now().strftime('%H%M%S')}_{file.filename.split('.')[0]}.mp4"
     web_path = os.path.join(RESULT_DIR, web_filename)
 
-    # 2. Инициализация видео
     cap = cv2.VideoCapture(temp_path)
     fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
     w, h = int(cap.get(3)), int(cap.get(4))
@@ -48,12 +44,10 @@ async def process_video(file: UploadFile = File(...)):
     violation_detected = False
     frame_count = 0
 
-    # 3. Цикл обработки
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret: break
 
-        # Используем модель из модуля core
         results = core.model.track(frame, persist=True, verbose=False, device=core.DEVICE, conf=0.45, imgsz=640)
 
         persons = []
@@ -70,7 +64,6 @@ async def process_video(file: UploadFile = File(...)):
         for s_box in skateboards:
             riding = False
             for i, p_box in enumerate(persons):
-                # Вызываем логику проверки из модуля core
                 if i not in used_p and core.is_riding(s_box, p_box):
                     riding = True
                     used_p.add(i)
@@ -89,7 +82,6 @@ async def process_video(file: UploadFile = File(...)):
     cap.release()
     out.release()
 
-    # 4. Конвертация FFmpeg
     subprocess.run([
         'ffmpeg', '-y', '-i', raw_path,
         '-vcodec', 'libx264', '-preset', 'ultrafast', '-crf', '28',
@@ -99,7 +91,6 @@ async def process_video(file: UploadFile = File(...)):
     if os.path.exists(raw_path): os.remove(raw_path)
     if os.path.exists(temp_path): os.remove(temp_path)
 
-    # 5. Сохранение в историю через модуль database
     history_entry = {
         "date": datetime.now().strftime("%d.%m.%Y %H:%M"),
         "filename": file.filename,
