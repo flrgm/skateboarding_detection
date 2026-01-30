@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anti-Skate Monitoring</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .animate-skate-pulse { animation: pulse-custom 2s ease-in-out infinite; }
+        @keyframes pulse-custom { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.1); opacity: 0.8; } }
+        .shimmer-text { background: linear-gradient(90deg, #94a3b8 0%, #3b82f6 50%, #94a3b8 100%); background-size: 200% auto; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: shine 3s linear infinite; }
+        @keyframes shine { to { background-position: 200% center; } }
+        .fade-in { animation: fadeIn 0.5s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen">
+
+    <div class="container mx-auto px-4 py-12 max-w-4xl">
+        <header class="text-center mb-10 fade-in">
+            <h1 class="text-5xl font-bold tracking-tight text-white mb-4 italic">Anti-Skate Monitoring</h1>
+            <p class="text-slate-400 text-lg">Контроль катания на скейтборде в запрещенных местах (YOLOv11m)</p>
+        </header>
+
+        <main class="space-y-6">
+            <section class="bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl">
+                <form id="uploadForm" class="space-y-6 text-center">
+                    <div class="border-2 border-dashed border-slate-700 rounded-2xl p-10 hover:border-blue-500/50 transition-all relative">
+                        <input type="file" name="file" id="fileInput" accept="video/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+                        <div id="promptContent">
+                            <p class="text-lg font-medium text-white">Загрузите видео</p>
+                            <p id="fileNameDisplay" class="text-blue-400 mt-2 font-mono text-sm"></p>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-lg transition-all">Начать анализ</button>
+                        <button type="button" onclick="showHistory()" class="bg-slate-800 hover:bg-slate-700 text-white font-bold py-4 rounded-xl transition-all">История</button>
+                    </div>
+                </form>
+
+                <div id="loading" class="hidden mt-10 text-center fade-in">
+                    <div class="relative inline-block mb-4">
+                        <div class="absolute inset-0 rounded-full bg-blue-500/20 animate-ping"></div>
+                        <div class="relative bg-slate-800 w-16 h-16 rounded-full flex items-center justify-center border border-blue-500/40 animate-skate-pulse">
+                            <span class="text-3xl">🛹</span>
+                        </div>
+                    </div>
+                    <h3 class="text-xl font-bold text-white shimmer-text uppercase">Обработка...</h3>
+                </div>
+            </section>
+
+            <section id="resultSection" class="hidden fade-in">
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
+                    <div class="px-6 py-4 flex justify-between border-b border-slate-800">
+                        <span id="statusText" class="font-bold uppercase tracking-wider text-sm"></span>
+                        <a id="downloadLink" href="#" download class="text-blue-400 text-xs font-bold uppercase">Скачать</a>
+                    </div>
+                    <video id="outputVideo" controls class="w-full max-h-[60vh] bg-black"></video>
+                </div>
+            </section>
+
+            <div id="historyModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div class="bg-slate-900 border border-slate-800 w-full max-w-2xl rounded-3xl p-8 max-h-[80vh] overflow-hidden flex flex-col">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold text-white">История запросов</h2>
+                        <div class="flex gap-2">
+                            <a href="/export_excel" class="bg-green-700 hover:bg-green-600 text-white text-xs px-4 py-2 rounded-lg font-bold transition-all italic">Excel</a>
+                            <button onclick="closeHistory()" class="text-slate-400 hover:text-white text-2xl">&times;</button>
+                        </div>
+                    </div>
+                    <div class="overflow-y-auto pr-2">
+                        <table class="w-full text-left text-sm text-slate-300">
+                            <thead class="text-xs text-slate-500 uppercase border-b border-slate-800">
+                                <tr>
+                                    <th class="py-3 px-2">Дата</th>
+                                    <th class="py-3 px-2">Файл</th>
+                                    <th class="py-3 px-2">Нарушение</th>
+                                </tr>
+                            </thead>
+                            <tbody id="historyTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const fileNameDisplay = document.getElementById('fileNameDisplay');
+
+        fileInput.onchange = () => { if(fileInput.files[0]) fileNameDisplay.textContent = fileInput.files[0].name; };
+
+        document.getElementById('uploadForm').onsubmit = async (e) => {
+            e.preventDefault();
+            if(!fileInput.files[0]) return;
+            document.getElementById('loading').classList.remove('hidden');
+            document.getElementById('resultSection').classList.add('hidden');
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            try {
+                const res = await fetch('/process_video/', { method: 'POST', body: formData });
+                const data = await res.json();
+                document.getElementById('outputVideo').src = data.video_url;
+                document.getElementById('downloadLink').href = data.video_url;
+                const st = document.getElementById('statusText');
+                st.textContent = data.violation === "Yes" ? "Нарушение: Да" : "Нарушение: Нет";
+                st.className = data.violation === "Yes" ? "text-red-500 font-bold uppercase tracking-wider text-sm" : "text-green-500 font-bold uppercase tracking-wider text-sm";
+                document.getElementById('resultSection').classList.remove('hidden');
+            } finally {
+                document.getElementById('loading').classList.add('hidden');
+            }
+        };
+
+        async function showHistory() {
+            const res = await fetch('/get_history');
+            const data = await res.json();
+            const body = document.getElementById('historyTableBody');
+            body.innerHTML = data.map(row => `
+                <tr class="border-b border-slate-800/50">
+                    <td class="py-3 px-2 font-mono text-[11px]">${row.date}</td>
+                    <td class="py-3 px-2 truncate max-w-[150px]">${row.filename}</td>
+                    <td class="py-3 px-2 ${row.violation === 'Да' ? 'text-red-400' : 'text-green-400'}">${row.violation}</td>
+                </tr>
+            `).join('');
+            document.getElementById('historyModal').classList.remove('hidden');
+        }
+
+        function closeHistory() { document.getElementById('historyModal').classList.add('hidden'); }
+    </script>
+</body>
+</html>
